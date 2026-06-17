@@ -17,7 +17,7 @@ from plotly.subplots import make_subplots
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from config import (
-    OUTPUT_DIR, REPORT_FILE, TEMPLATE_DIR, VIX_THRESHOLDS,
+    OUTPUT_DIR, REPORT_FILE, VIX_THRESHOLDS,
     RSI_PERIOD, MACD_FAST, MACD_SLOW, MACD_SIGNAL,
 )
 

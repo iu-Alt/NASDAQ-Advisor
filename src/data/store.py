@@ -29,6 +29,9 @@ def load_cache(filepath: str, date_col: str = "Date") -> pd.DataFrame:
         df = pd.read_csv(filepath, index_col=0, parse_dates=True)
         if date_col in df.columns:
             df[date_col] = pd.to_datetime(df[date_col])
+        # 确保 index 是 tz-naive (yfinance 可能返回 tz-aware)
+        if isinstance(df.index, pd.DatetimeIndex) and df.index.tz is not None:
+            df.index = df.index.tz_localize(None)
         return df
     return pd.DataFrame()
 

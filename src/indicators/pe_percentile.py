@@ -70,6 +70,9 @@ def calculate_pe_percentile(data: Dict) -> Dict:
         return result
 
     prices = ndx_history["close"].dropna()
+    # 统一去除时区 — yfinance 可能返回 tz-aware datetime
+    if prices.index.tz is not None:
+        prices.index = prices.index.tz_localize(None)
     if len(prices) < 252:  # 至少 1 年数据
         logger.warning(f"Not enough NDX history: {len(prices)} days")
         return result

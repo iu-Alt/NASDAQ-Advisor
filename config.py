@@ -5,9 +5,15 @@
 """
 
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+# CI 环境中可能没有 .env 文件，静默跳过
+_env_file = Path(__file__).parent / ".env"
+if _env_file.exists():
+    load_dotenv(_env_file)
+else:
+    load_dotenv()  # 尝试从当前目录查找
 
 # ============================================================
 # 辅助函数：处理 GitHub Actions 中空字符串 secrets 的问题

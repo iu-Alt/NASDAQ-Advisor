@@ -81,6 +81,9 @@ def _safe_yf_download(ticker: str, start: str, end: str,
             df = t.history(start=start, end=end, interval=interval,
                            auto_adjust=True)
             if df is not None and not df.empty:
+                # 去掉时区信息，统一用 tz-naive datetime
+                if df.index.tz is not None:
+                    df.index = df.index.tz_localize(None)
                 # 标准化列名
                 if isinstance(df.columns, pd.MultiIndex):
                     df.columns = df.columns.get_level_values(0)

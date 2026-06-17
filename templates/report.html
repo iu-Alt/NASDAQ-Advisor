@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>纳指投资建议 — {{ report_date }}</title>
+    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+    <style>
+        :root {
+            --bg: #0f172a;
+            --card-bg: #1e293b;
+            --border: #334155;
+            --text: #e2e8f0;
+            --text-secondary: #94a3b8;
+            --green: #22c55e;
+            --yellow: #facc15;
+            --orange: #f97316;
+            --red: #ef4444;
+            --blue: #3b82f6;
+            --purple: #8b5cf6;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+                         'Microsoft YaHei', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+
+        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+
+        /* Header */
+        .header {
+            text-align: center;
+            padding: 30px 20px;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 30px;
+        }
+        .header h1 { font-size: 2rem; font-weight: 700; margin-bottom: 8px; }
+        .header .date { color: var(--text-secondary); font-size: 0.95rem; }
+        .header .disclaimer {
+            margin-top: 12px; font-size: 0.8rem; color: #64748b;
+            max-width: 600px; margin-left: auto; margin-right: auto;
+        }
+
+        /* Hero Decision Card */
+        .hero {
+            background: var(--card-bg);
+            border: 2px solid var(--border);
+            border-radius: 16px;
+            padding: 40px;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .hero .decision-emoji { font-size: 4rem; margin-bottom: 12px; }
+        .hero .decision-label { font-size: 2.5rem; font-weight: 800; margin-bottom: 8px; }
+        .hero .decision-action { color: var(--text-secondary); font-size: 1.1rem; margin-bottom: 24px; }
+        .hero .score-display {
+            display: inline-flex; align-items: baseline; gap: 8px;
+            background: rgba(255,255,255,0.05); padding: 12px 28px; border-radius: 50px;
+        }
+        .hero .score-number { font-size: 2.5rem; font-weight: 800; }
+        .hero .score-max { color: var(--text-secondary); font-size: 1rem; }
+
+        /* Metric Grid */
+        .section-title {
+            font-size: 1.3rem; font-weight: 700; margin: 36px 0 16px;
+            padding-bottom: 8px; border-bottom: 2px solid var(--border);
+        }
+        .metric-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 16px;
+            margin-bottom: 30px;
+        }
+        .metric-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+            transition: transform 0.15s;
+        }
+        .metric-card:hover { transform: translateY(-2px); }
+        .metric-card .metric-header {
+            display: flex; justify-content: space-between; align-items: center;
+            margin-bottom: 10px;
+        }
+        .metric-card .metric-name { font-weight: 600; font-size: 0.95rem; }
+        .metric-card .metric-weight {
+            font-size: 0.75rem; color: var(--text-secondary);
+            background: rgba(255,255,255,0.06); padding: 2px 8px; border-radius: 20px;
+        }
+        .metric-card .metric-value {
+            font-size: 1.5rem; font-weight: 700; margin-bottom: 4px;
+        }
+        .metric-card .metric-sub {
+            font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 8px;
+        }
+        .metric-card .metric-score {
+            display: inline-block; padding: 3px 12px; border-radius: 20px;
+            font-size: 0.85rem; font-weight: 600;
+        }
+        .metric-card .metric-assessment { font-size: 0.85rem; color: var(--text-secondary); margin-top: 6px; }
+        .score-pos2 { background: #16653433; color: #4ade80; }
+        .score-pos1 { background: #16653422; color: #86efac; }
+        .score-zero  { background: #64748b22; color: #94a3b8; }
+        .score-neg1 { background: #7c2d1211; color: #fca5a5; }
+        .score-neg2 { background: #7c2d1222; color: #f87171; }
+
+        /* Charts */
+        .charts-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .chart-box {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 16px;
+        }
+        .chart-box h3 { font-size: 1rem; margin-bottom: 12px; color: var(--text-secondary); }
+        .chart-full {
+            grid-column: 1 / -1;
+        }
+
+        /* History Table */
+        .history-table {
+            width: 100%; border-collapse: collapse;
+            background: var(--card-bg); border-radius: 12px; overflow: hidden;
+            margin-bottom: 30px;
+        }
+        .history-table th {
+            text-align: left; padding: 12px 16px;
+            background: rgba(255,255,255,0.04); font-weight: 600;
+            font-size: 0.85rem; color: var(--text-secondary);
+        }
+        .history-table td {
+            padding: 10px 16px; border-top: 1px solid var(--border);
+            font-size: 0.9rem;
+        }
+        .history-table .decision-badge {
+            display: inline-block; padding: 2px 10px; border-radius: 12px;
+            font-weight: 600; font-size: 0.8rem;
+        }
+
+        /* Radar chart container */
+        #radar-chart { min-height: 500px; }
+
+        /* Footer */
+        .footer {
+            text-align: center; padding: 40px 20px;
+            color: #475569; font-size: 0.8rem; border-top: 1px solid var(--border);
+            margin-top: 40px;
+        }
+
+        /* Mobile */
+        @media (max-width: 768px) {
+            .hero { padding: 24px 16px; }
+            .hero .decision-label { font-size: 1.8rem; }
+            .charts-grid { grid-template-columns: 1fr; }
+            .metric-grid { grid-template-columns: 1fr; }
+            .container { padding: 12px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>📊 纳斯达克 100 投资分析</h1>
+            <div class="date">{{ report_date }} · {{ ndx_price }}</div>
+            <div class="disclaimer">
+                ⚠️ 本报告由算法自动生成，仅供参考，不构成投资建议。投资有风险，决策需谨慎。
+                过往表现不代表未来收益。请结合自身情况独立判断。
+            </div>
+        </div>
+
+        <!-- Hero Decision -->
+        <div class="hero">
+            <div class="decision-emoji">{{ decision.emoji }}</div>
+            <div class="decision-label" style="color: {{ decision.color }}">{{ decision.decision }}</div>
+            <div class="decision-action">{{ decision.action }}</div>
+            <div class="score-display">
+                <span class="score-number" style="color: {{ decision.color }}">{{ "%.1f"|format(scoring.total_score) }}</span>
+                <span class="score-max">/ {{ "%.1f"|format(scoring.max_possible) }} 分</span>
+            </div>
+            <div style="margin-top: 8px; color: var(--text-secondary); font-size: 0.9rem;">
+                评分百分位: {{ "%.0f"|format(scoring.score_pct) }}%
+            </div>
+        </div>
+
+        <!-- NDX Quick Stats -->
+        <div class="section-title">📈 市场快照</div>
+        <div class="metric-grid">
+            <div class="metric-card">
+                <div class="metric-header">
+                    <span class="metric-name">NDX 价格</span>
+                </div>
+                <div class="metric-value">{{ ndx_data.price|default("N/A") }}</div>
+                <div class="metric-sub">
+                    {% if ndx_data.change_pct and ndx_data.change_pct >= 0 %}
+                    <span style="color: var(--green)">▲ +{{ "%.2f"|format(ndx_data.change_pct) }}%</span>
+                    {% elif ndx_data.change_pct %}
+                    <span style="color: var(--red)">▼ {{ "%.2f"|format(ndx_data.change_pct) }}%</span>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-header">
+                    <span class="metric-name">52 周高/低</span>
+                </div>
+                <div class="metric-value" style="font-size: 1.2rem;">
+                    H: {{ ndx_data["52w_high"]|default("N/A") }} / L: {{ ndx_data["52w_low"]|default("N/A") }}
+                </div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-header">
+                    <span class="metric-name">PE (TTM)</span>
+                </div>
+                <div class="metric-value">{{ pe_data.current_pe|default("N/A") }}</div>
+                <div class="metric-sub">数据源: {{ pe_data.source|default("N/A") }}</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-header">
+                    <span class="metric-name">VIX</span>
+                </div>
+                <div class="metric-value">{{ vix_data.current_vix|default("N/A") }}</div>
+                <div class="metric-sub">{{ vix_data.zone|default("") }}</div>
+            </div>
+        </div>
+
+        <!-- Indicators Detail -->
+        <div class="section-title">🔬 指标详情</div>
+        <div class="metric-grid">
+            {% for item in scoring.weighted_breakdown %}
+            <div class="metric-card">
+                <div class="metric-header">
+                    <span class="metric-name">{{ item.display_name }}</span>
+                    <span class="metric-weight">{{ item.weight }}%</span>
+                </div>
+                <div class="metric-value">
+                    <span class="metric-score
+                        {% if item.score >= 2 %}score-pos2
+                        {% elif item.score == 1 %}score-pos1
+                        {% elif item.score == 0 %}score-zero
+                        {% elif item.score == -1 %}score-neg1
+                        {% else %}score-neg2{% endif %}
+                    ">
+                        {{ "%+d"|format(item.score) }}
+                    </span>
+                    <span style="font-size:0.8rem;color:var(--text-secondary);margin-left:4px;">
+                        加权 {{ "%+.2f"|format(item.weighted) }}
+                    </span>
+                </div>
+                <div class="metric-assessment">{{ item.assessment }}</div>
+            </div>
+            {% endfor %}
+        </div>
+
+        <!-- Charts -->
+        <div class="section-title">📉 技术图表</div>
+        <div class="charts-grid">
+            <div class="chart-box chart-full" id="price-chart"></div>
+            <div class="chart-box" id="pe-chart"></div>
+            <div class="chart-box" id="vix-chart"></div>
+            <div class="chart-box" id="rsi-chart"></div>
+            <div class="chart-box" id="macd-chart"></div>
+            <div class="chart-box" id="radar-chart"></div>
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+            <p>纳指投资建议系统 v1.0 · 数据来源: Yahoo Finance, FRED, CNN</p>
+            <p>生成时间: {{ timestamp }} · 下次更新: 下一交易日收盘后</p>
+            <p style="margin-top: 12px;">本报告仅为个人投资参考工具，不构成任何形式的投资建议。</p>
+        </div>
+    </div>
+
+    <script>
+        // Inject Plotly chart data
+        {% for chart_id, chart_json in charts.items() %}
+        (function() {
+            var el = document.getElementById("{{ chart_id }}");
+            if (el && {{ chart_json|safe }} !== null) {
+                var fig = {{ chart_json|safe }};
+                Plotly.newPlot(el, fig.data, fig.layout, {
+                    responsive: true,
+                    displayModeBar: false,
+                });
+            }
+        })();
+        {% endfor %}
+    </script>
+</body>
+</html>

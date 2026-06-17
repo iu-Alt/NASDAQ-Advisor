@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+.venv/
+venv/
+
+# 环境变量
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# 数据缓存 (生成的文件)
+data/*.csv
+
+# 输出 (生成的 HTML)
+output/index.html
+output/reports/
+output/archive/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/

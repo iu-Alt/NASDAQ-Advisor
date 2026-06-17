@@ -10,15 +10,28 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ============================================================
+# 辅助函数：处理 GitHub Actions 中空字符串 secrets 的问题
+# ============================================================
+def _env(key: str, default: str = "") -> str:
+    """获取环境变量，空字符串视为未设置。"""
+    val = os.getenv(key, default)
+    return val if val else default
+
+def _env_int(key: str, default: int) -> int:
+    """获取整数环境变量，空字符串视为未设置。"""
+    val = os.getenv(key, "")
+    return int(val) if val else default
+
+# ============================================================
 # API Keys (从环境变量读取，GitHub Actions 中通过 secrets 注入)
 # ============================================================
-FRED_API_KEY = os.getenv("FRED_API_KEY", "")
-SERVER_CHAN_KEY = os.getenv("SERVER_CHAN_KEY", "")  # Server酱 SendKey
-EMAIL_SMTP_HOST = os.getenv("EMAIL_SMTP_HOST", "")
-EMAIL_SMTP_PORT = int(os.getenv("EMAIL_SMTP_PORT", "587"))
-EMAIL_USER = os.getenv("EMAIL_USER", "")
-EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD", "")
-EMAIL_TO = os.getenv("EMAIL_TO", "")
+FRED_API_KEY = _env("FRED_API_KEY")
+SERVER_CHAN_KEY = _env("SERVER_CHAN_KEY")  # Server酱 SendKey
+EMAIL_SMTP_HOST = _env("EMAIL_SMTP_HOST")
+EMAIL_SMTP_PORT = _env_int("EMAIL_SMTP_PORT", 587)
+EMAIL_USER = _env("EMAIL_USER")
+EMAIL_PASSWORD = _env("EMAIL_PASSWORD")
+EMAIL_TO = _env("EMAIL_TO")
 
 # ============================================================
 # 指标权重 (总和 100%)
@@ -165,4 +178,4 @@ REPORT_FILE = os.path.join(OUTPUT_DIR, "index.html")
 ARCHIVE_DIR = os.path.join(OUTPUT_DIR, "archive")
 
 # GitHub Pages URL (部署后由用户设置)
-GITHUB_PAGES_URL = os.getenv("GITHUB_PAGES_URL", "")
+GITHUB_PAGES_URL = _env("GITHUB_PAGES_URL")

@@ -50,12 +50,7 @@ jobs:
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
           SERVER_CHAN_KEY: ${{ secrets.SERVER_CHAN_KEY }}
-          EMAIL_SMTP_HOST: ${{ secrets.EMAIL_SMTP_HOST }}
-          EMAIL_SMTP_PORT: ${{ secrets.EMAIL_SMTP_PORT }}
-          EMAIL_USER: ${{ secrets.EMAIL_USER }}
-          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
-          EMAIL_TO: ${{ secrets.EMAIL_TO }}
-          GITHUB_PAGES_URL: ${{ vars.GITHUB_PAGES_URL || 'https://iu-Alt.github.io/NASDAQ-Advisor/' }}
+          GITHUB_PAGES_URL: https://iu-Alt.github.io/NASDAQ-Advisor/
         run: python src/main.py
 
       - name: Commit and push data updates

@@ -54,10 +54,12 @@ jobs:
         run: python src/main.py
 
       - name: Commit and push data updates
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          # Only add CSV data files, not all output
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
           git add data/*.csv output/index.html 2>/dev/null || true
           if git diff --staged --quiet; then
             echo "No changes to commit"

@@ -31,7 +31,7 @@ from .store import (
 logger = logging.getLogger(__name__)
 
 # 全局速率控制
-_RATE_LIMIT_DELAY = 5.0  # yfinance 调用间隔 (秒) — 避免限流
+_RATE_LIMIT_DELAY = 1.5  # yfinance 调用间隔 (秒) — GitHub Actions IP 干净，不必太慢
 _last_yf_call = 0.0
 
 
@@ -76,7 +76,6 @@ def _safe_yf_download(ticker: str, start: str, end: str,
     for attempt in range(4):
         try:
             _rate_limit()
-            # 使用 Ticker API (比 download 更稳定)
             t = yf.Ticker(ticker)
             df = t.history(start=start, end=end, interval=interval,
                            auto_adjust=True)
@@ -92,14 +91,14 @@ def _safe_yf_download(ticker: str, start: str, end: str,
         except Exception as e:
             err_msg = str(e)
             if "rate limit" in err_msg.lower() or "too many" in err_msg.lower():
-                wait = min(60, 10 * (2 ** attempt))
+                wait = min(15, 2 * (2 ** attempt))  # max 15s, was 60s
                 logger.warning(f"Rate limited for {ticker}, "
                                f"waiting {wait}s before retry {attempt + 1}/4...")
                 time.sleep(wait)
             else:
                 logger.warning(f"yfinance download attempt {attempt + 1}/4 failed "
                                f"for {ticker}: {e}")
-                time.sleep(3 + attempt * 2)
+                time.sleep(1 + attempt)
     logger.error(f"Failed to download {ticker} after 4 attempts")
     return pd.DataFrame()
 
@@ -592,57 +591,30 @@ NDX_FULL_COMPONENTS = NDX_TOP_COMPONENTS  # yfinance 限制，用主要成分股
 
 def fetch_ndx_breadth_data(hist_df: pd.DataFrame) -> Dict:
     """
-    计算市场宽度：获取 NDX 主要成分股，计算高于 MA50 的比例。
-    使用代表性的前 15 只成分股（减少调用量），带速率控制。
-    如果前几只就遇到限流，直接返回回退值。
+    计算市场宽度 — 快速版本。
+    用 NDX 自身价格与 MA50 的关系估算成分股健康度。
+    避免逐只拉取成分股（极慢），5% 权重不值得 60+ 秒等待。
     """
-    components = NDX_FULL_COMPONENTS[:15]
-    end = datetime.now().strftime("%Y-%m-%d")
-    start = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
-
-    above_ma50_counts = []
-    rate_limited = False
-
-    for symbol in components:
-        try:
-            _rate_limit()
-            ticker = yf.Ticker(symbol)
-            hist = ticker.history(start=start, end=end, auto_adjust=True)
-            if hist.empty or len(hist) < 50:
-                continue
-            ma50 = hist["Close"].rolling(window=50).mean()
-            latest_close = float(hist["Close"].iloc[-1])
-            latest_ma50 = float(ma50.iloc[-1])
-            if pd.notna(latest_ma50) and latest_ma50 > 0:
-                above_ma50_counts.append(1 if latest_close > latest_ma50 else 0)
-        except Exception as e:
-            if "rate limit" in str(e).lower() or "too many" in str(e).lower():
-                rate_limited = True
-                break
-            continue
-
-    total = len(above_ma50_counts)
-    above = sum(above_ma50_counts)
-    pct_above_ma50 = round(above / total * 100, 1) if total > 0 else None
-
-    # 如果数据不足或被限流，使用基于 NDX 自身价格与 MA50 关系的近似
-    if pct_above_ma50 is None or total < 5:
-        if not hist_df.empty and "close" in hist_df.columns:
-            closes = hist_df["close"].dropna()
-            if len(closes) >= 50:
-                ndx_ma50 = float(closes.iloc[-50:].mean())
-                ndx_price = float(closes.iloc[-1])
-                # 粗略近似：NDX 自身在 MA50 上方 → 假定约 55% 的成分股也在上方
-                is_above = ndx_price > ndx_ma50
-                pct_above_ma50 = 55.0 if is_above else 40.0
-                total = 0  # 标记为近似值
-                above = 0
-                logger.info(f"Using NDX-based breadth estimate: {pct_above_ma50}%")
+    if not hist_df.empty and "close" in hist_df.columns:
+        closes = hist_df["close"].dropna()
+        if len(closes) >= 50:
+            ndx_ma50 = float(closes.iloc[-50:].mean())
+            ndx_price = float(closes.iloc[-1])
+            is_above = ndx_price > ndx_ma50
+            pct = 60.0 if is_above else 40.0
+            logger.info(f"Breadth (NDX proxy): {pct:.0f}% (NDX {'above' if is_above else 'below'} MA50)")
+            return {
+                "pct_above_ma50": pct,
+                "stocks_checked": 0,
+                "stocks_above_ma50": 0,
+                "method": "ndx_proxy",
+            }
 
     return {
-        "pct_above_ma50": pct_above_ma50,
-        "stocks_checked": total,
-        "stocks_above_ma50": above,
+        "pct_above_ma50": 50.0,
+        "stocks_checked": 0,
+        "stocks_above_ma50": 0,
+        "method": "default",
     }
 
 

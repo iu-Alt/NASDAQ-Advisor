@@ -24,7 +24,7 @@ def calculate_macd(data: Dict) -> Dict:
          "crossover": str, "assessment": str}
     """
     result = {
-        "score": 0,
+        "score": None,
         "macd_line": None,
         "signal_line": None,
         "histogram": None,

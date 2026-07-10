@@ -22,10 +22,12 @@ from config import (
     FRED_API_KEY, FRED_SERIES,
     CACHE_NDX_HISTORY, CACHE_PE_HISTORY,
     CACHE_VIX_HISTORY, CACHE_DXY_HISTORY,
+    VXN_TICKER,
 )
 from .store import (
     load_cache, save_cache, update_cache,
     get_missing_range, get_ndx_history, get_vix_history,
+    load_provenance, get_data_quality_report,
 )
 
 logger = logging.getLogger(__name__)
@@ -416,6 +418,32 @@ def fetch_vix_current() -> Optional[float]:
 
 
 # ============================================================
+# VXN (Nasdaq-100 波动率指数) — 纳指策略优先使用
+# ============================================================
+
+def fetch_vxn_current() -> Optional[float]:
+    """
+    获取 VXN (CBOE Nasdaq-100 Volatility Index) 当前值。
+    失败时回退到 VIX。
+    VXN 是纳斯达克 100 的专属波动率指标，比 VIX (标普500) 更有针对性。
+    """
+    try:
+        _rate_limit()
+        vxn = yf.Ticker(VXN_TICKER)
+        fast_info = vxn.fast_info
+        val = float(fast_info.get("lastPrice", 0) or vxn.info.get("regularMarketPrice", 0))
+        if val and val > 0:
+            logger.info(f"VXN current: {val:.2f}")
+            return val
+    except Exception as e:
+        logger.warning(f"Failed to fetch VXN: {e}")
+
+    # VXN 可能不可用（某些 yfinance 版本），回退到 VIX
+    logger.info("VXN unavailable, will fall back to VIX for Nasdaq volatility")
+    return None
+
+
+# ============================================================
 # 恐慌贪婪指数 (CNN)
 # ============================================================
 
@@ -541,26 +569,31 @@ def fetch_macro_data() -> Dict:
 
 def fetch_dxy_data(lookback_years: int = 5) -> pd.DataFrame:
     """获取美元指数历史数据。优先使用缓存，失败时返回缓存数据。"""
-    # 先检查缓存
-    cached = load_cache(CACHE_DXY_HISTORY)
-    if not cached.empty:
-        logger.info("Using cached DXY data")
-        return cached
+    start, end = get_missing_range(CACHE_DXY_HISTORY, lookback_years * 365)
+    existing = load_cache(CACHE_DXY_HISTORY)
 
-    end = datetime.now().strftime("%Y-%m-%d")
-    start = (datetime.now() - timedelta(days=lookback_years * 365)).strftime("%Y-%m-%d")
+    if start is None:
+        logger.info("DXY history cache is up to date")
+        return existing
 
     # 尝试 DX-Y.NYB
+    logger.info(f"Fetching DXY data from {start} to {end}")
     df = _safe_yf_download("DX-Y.NYB", start, end)
     if not df.empty:
-        save_cache(df, CACHE_DXY_HISTORY)
-        return df
+        if existing.empty:
+            save_cache(df, CACHE_DXY_HISTORY)
+            return df
+        return update_cache(CACHE_DXY_HISTORY, df)
 
     # Fallback: UUP ETF
     df = _safe_yf_download("UUP", start, end)
     if not df.empty:
-        save_cache(df, CACHE_DXY_HISTORY)
-    return df
+        if existing.empty:
+            save_cache(df, CACHE_DXY_HISTORY)
+            return df
+        return update_cache(CACHE_DXY_HISTORY, df)
+
+    return existing
 
 
 # ============================================================
@@ -626,32 +659,62 @@ def fetch_all_data() -> Dict:
     """
     主入口：一次性获取所有所需数据。
     返回一个包含所有原始数据的字典，供各指标模块使用。
+
+    返回值包含:
+      - data_quality: 数据质量报告 (is_synthetic, issues, ...)
+      - 各数据源的 as_of 日期
     """
     logger.info("=" * 60)
     logger.info(f"Starting data fetch at {datetime.now().isoformat()}")
     logger.info("=" * 60)
 
+    # ---- 数据质量预检查 ----
+    quality = get_data_quality_report()
+    if quality["is_synthetic"]:
+        logger.error("DATA QUALITY: Synthetic data detected in cache!")
+        logger.error("  Run 'rm data/*.csv' and re-run to download real data.")
+    if quality["issues"]:
+        for issue in quality["issues"]:
+            logger.warning(f"DATA QUALITY: {issue}")
+
     data = {
         "timestamp": datetime.now().isoformat(),
         "fetch_date": datetime.now().strftime("%Y-%m-%d"),
+        "data_quality": quality,
+        "data_as_of": {},  # 每个数据源的实际市场日期
     }
 
     # 1. NDX 历史价格
     logger.info("Fetching NDX history...")
     data["ndx_history"] = fetch_ndx_history(lookback_years=10)
+    if not data["ndx_history"].empty:
+        data["data_as_of"]["ndx"] = str(data["ndx_history"].index.max().date())
 
     # 2. NDX 当前数据
     logger.info("Fetching NDX current data...")
     data["ndx_current"] = fetch_ndx_current()
 
-    # 3. PE 数据
-    logger.info("Fetching PE data...")
+    # 3. PE 数据 (仅作信息参考，不计入评分)
+    logger.info("Fetching PE data (informational only)...")
     data["pe_data"] = fetch_ndx_pe_data()
 
-    # 4. VIX
+    # 4. VIX + VXN
     logger.info("Fetching VIX data...")
     data["vix_history"] = fetch_vix_history(lookback_years=5)
     data["vix_current"] = fetch_vix_current()
+    if not data["vix_history"].empty:
+        data["data_as_of"]["vix"] = str(data["vix_history"].index.max().date())
+
+    # VXN (Nasdaq-100 专属波动率)
+    logger.info("Fetching VXN data...")
+    data["vxn_current"] = fetch_vxn_current()
+    # 如果 VXN 不可用，用 VIX 标注
+    if data["vxn_current"] is None:
+        data["vxn_current"] = data.get("vix_current")
+        data["vxn_source"] = "vix_fallback"
+        logger.info("VXN not available, using VIX as Nasdaq volatility proxy")
+    else:
+        data["vxn_source"] = "vxn_live"
 
     # 5. Fear & Greed
     logger.info("Fetching Fear & Greed index...")
@@ -660,15 +723,38 @@ def fetch_all_data() -> Dict:
     # 6. 宏观利率
     logger.info("Fetching macro data (FRED)...")
     data["macro"] = fetch_macro_data()
+    if data["macro"].get("spread_10y_2y") is not None:
+        data["data_as_of"]["macro"] = datetime.now().strftime("%Y-%m-%d")
 
     # 7. DXY
     logger.info("Fetching DXY data...")
     data["dxy_history"] = fetch_dxy_data(lookback_years=2)
+    if not data["dxy_history"].empty:
+        data["data_as_of"]["dxy"] = str(data["dxy_history"].index.max().date())
 
-    # 8. 市场宽度
-    logger.info("Fetching market breadth data...")
-    hist_df = data.get("ndx_history", pd.DataFrame())
-    data["breadth"] = fetch_ndx_breadth_data(hist_df)
+    # 8. 市场宽度 — 已废弃
+    #    之前的 NDX proxy 实现 (NDX vs MA50 → 60% or 40%) 与均线偏离度高度重复，
+    #    真实成分股宽度需逐只拉取并计算，待后续实现。
+    logger.info("Market breadth: skipped (proxy removed, real breadth TBD)")
+    data["breadth"] = {
+        "pct_above_ma50": None,
+        "stocks_checked": 0,
+        "stocks_above_ma50": 0,
+        "method": "disabled",
+        "note": "真实成分股宽度待实现，当前版本已移除伪代理指标",
+    }
+
+    # ---- 数据质量后检查 ----
+    # 检查是否有任何数据来自模拟缓存
+    for key in ["ndx_history", "vix_history", "dxy_history"]:
+        df = data.get(key, pd.DataFrame())
+        if not df.empty:
+            prov = df.attrs.get("provenance", {})
+            if prov.get("is_synthetic"):
+                data["data_quality"]["is_synthetic"] = True
+                data["data_quality"]["issues"].append(
+                    f"{key}: data is synthetic (from generate_sample_data.py)"
+                )
 
     logger.info("Data fetch complete.")
     return data

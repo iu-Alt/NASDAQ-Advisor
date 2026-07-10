@@ -52,6 +52,7 @@ def generate_report(all_data: Dict, indicator_results: Dict,
     ndx_current = all_data.get("ndx_current", {})
     pe_data = all_data.get("pe_data", {})
     vix_data = indicator_results.get("vix", {})
+    data_quality = all_data.get("data_quality", {})
 
     price_str = f"${ndx_current.get('price', 'N/A'):,.0f}" if ndx_current.get("price") else "N/A"
 
@@ -62,6 +63,10 @@ def generate_report(all_data: Dict, indicator_results: Dict,
         "ndx_data": ndx_current,
         "pe_data": pe_data,
         "vix_data": vix_data,
+        "vxn_current": all_data.get("vxn_current"),
+        "vxn_source": all_data.get("vxn_source", "unknown"),
+        "data_as_of": all_data.get("data_as_of", {}),
+        "data_quality": data_quality,
         "scoring": scoring_result,
         "decision": decision_result,
         "charts": charts,
@@ -231,7 +236,7 @@ def _make_vix_chart(data: Dict) -> str:
 
 
 def _make_rsi_chart(data: Dict) -> str:
-    """RSI 走势图 (含超买/超卖线)。"""
+    """RSI 走势图 (含超买/超卖线) — 使用 Wilder's RSI，与评分统一。"""
     df = data.get("ndx_history", pd.DataFrame())
     if df.empty or "close" not in df.columns:
         return "null"
@@ -240,14 +245,9 @@ def _make_rsi_chart(data: Dict) -> str:
     if len(closes) < RSI_PERIOD + 1:
         return "null"
 
-    # 手动计算 RSI
-    delta = closes.diff()
-    gain = delta.clip(lower=0)
-    loss = (-delta).clip(lower=0)
-    avg_gain = gain.ewm(span=RSI_PERIOD, adjust=False).mean()
-    avg_loss = loss.ewm(span=RSI_PERIOD, adjust=False).mean()
-    rs = avg_gain / avg_loss.replace(0, np.nan)
-    rsi = 100 - (100 / (1 + rs))
+    # Wilder's RSI — 与 src/indicators/rsi.py 统一
+    from src.indicators.rsi import _wilder_rsi
+    rsi = _wilder_rsi(closes, RSI_PERIOD)
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(
@@ -333,7 +333,7 @@ def _make_macd_chart(data: Dict) -> str:
 
 
 def _make_radar_chart(indicator_results: Dict) -> str:
-    """指标雷达图 — 9 个指标的得分总览。"""
+    """指标雷达图 — 7 个活跃指标的得分总览 (PE 和宽度已移除)。"""
     from config import WEIGHTS
 
     categories = []
@@ -341,13 +341,17 @@ def _make_radar_chart(indicator_results: Dict) -> str:
     for key, weight in WEIGHTS.items():
         ind = indicator_results.get(key, {})
         display_names = {
-            "pe_percentile": "PE分位", "vix": "VIX", "rsi": "RSI",
-            "macd": "MACD", "ma_deviation": "均线偏离",
-            "fear_greed": "恐慌贪婪", "macro": "宏观利率",
-            "dxy": "美元指数", "breadth": "市场宽度",
+            "vix": "VIX/VXN",
+            "rsi": "RSI",
+            "macd": "MACD",
+            "ma_deviation": "均线偏离",
+            "fear_greed": "恐慌贪婪",
+            "macro": "宏观利率",
+            "dxy": "美元指数",
         }
         categories.append(display_names.get(key, key))
-        scores.append(ind.get("score", 0) if ind else 0)
+        score = ind.get("score") if ind else None
+        scores.append(score if score is not None else 0)
 
     # 闭合雷达图
     categories.append(categories[0])

@@ -24,7 +24,7 @@ def calculate_fear_greed(data: Dict) -> Dict:
          "source": str, "assessment": str}
     """
     result = {
-        "score": 0,
+        "score": None,
         "value": None,
         "rating": "unknown",
         "source": None,
@@ -90,24 +90,12 @@ def calculate_fear_greed(data: Dict) -> Dict:
         result["rating"] = est_rating
         result["source"] = "vix_derived"
 
-        # 评分逻辑同上
-        if est_value <= FEAR_GREED_THRESHOLDS["extreme_fear"]:
-            result["score"] = 2
-            result["assessment"] = f"VIX 推算市场极度恐慌 (VIX={vix_current:.1f})"
-        elif est_value <= FEAR_GREED_THRESHOLDS["fear"]:
-            result["score"] = 1
-            result["assessment"] = f"VIX 推算市场偏恐慌 (VIX={vix_current:.1f})"
-        elif est_value <= FEAR_GREED_THRESHOLDS["neutral"]:
-            result["score"] = 0
-            result["assessment"] = f"VIX 推算市场情绪中性 (VIX={vix_current:.1f})"
-        elif est_value <= FEAR_GREED_THRESHOLDS["greed"]:
-            result["score"] = -1
-            result["assessment"] = f"VIX 推算市场偏贪婪 (VIX={vix_current:.1f})"
-        else:
-            result["score"] = -2
-            result["assessment"] = f"VIX 推算市场极度贪婪 (VIX={vix_current:.1f})"
+        result["score"] = None
+        result["assessment"] = (
+            f"VIX 推算 Fear & Greed={est_value}，为避免与 VIX 重复计权，跳过评分"
+        )
 
-        logger.info(f"Fear & Greed (VIX-derived): {est_value}, score: {result['score']}")
+        logger.info("Fear & Greed derived from VIX, skipped to avoid double counting")
         return result
 
     logger.warning("No Fear & Greed data available (CNN unavailable, VIX also missing)")

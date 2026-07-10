@@ -1,7 +1,10 @@
 """
-RSI 相对强弱指标 (权重 10%)
+RSI 相对强弱指标 (权重 15%)
 ===============================
-计算 14 日 RSI，判断超买/超卖状态。
+使用 Wilder's RSI 计算 14 日相对强弱，判断超买/超卖状态。
+
+Wilder's smoothing: 初始值用 SMA，之后用 EMA 递推。
+评分和图表计算现已统一。
 """
 
 import logging
@@ -14,16 +17,38 @@ from config import RSI_PERIOD, RSI_THRESHOLDS
 logger = logging.getLogger(__name__)
 
 
+def _wilder_rsi(closes: pd.Series, period: int = 14) -> pd.Series:
+    """
+    Wilder's RSI 计算 (评分和图表统一使用此函数)。
+
+    Wilder's smoothing:
+      初始 avg_gain/avg_loss = SMA(period)
+      之后 avg_gain = (prev_avg_gain * (period-1) + current_gain) / period
+      即 EMA with alpha = 1/period, adjust=False。
+    """
+    delta = closes.diff()
+    gain = delta.clip(lower=0)
+    loss = (-delta).clip(lower=0)
+
+    # Wilder's smoothing: EMA with span=period, adjust=False
+    avg_gain = gain.ewm(span=period, adjust=False).mean()
+    avg_loss = loss.ewm(span=period, adjust=False).mean()
+
+    rs = avg_gain / avg_loss.replace(0, np.nan)
+    rsi = 100.0 - (100.0 / (1.0 + rs))
+    return rsi
+
+
 def calculate_rsi(data: Dict) -> Dict:
     """
-    基于 NDX 收盘价计算 RSI(14) 并评分。
+    基于 NDX 收盘价计算 Wilder's RSI(14) 并评分。
 
     输出：
         {"score": int, "rsi": float, "rsi_5d_ago": float,
          "assessment": str, "zone": str}
     """
     result = {
-        "score": 0,
+        "score": None,
         "rsi": None,
         "rsi_5d_ago": None,
         "assessment": "无法计算",
@@ -40,18 +65,8 @@ def calculate_rsi(data: Dict) -> Dict:
         logger.warning(f"Not enough data for RSI: {len(closes)} days")
         return result
 
-    # 手动计算 RSI（避免依赖 ta 库版本问题）
-    delta = closes.diff()
-    gain = delta.clip(lower=0)
-    loss = (-delta).clip(lower=0)
-
-    avg_gain = gain.rolling(window=RSI_PERIOD, min_periods=RSI_PERIOD).mean()
-    avg_loss = loss.rolling(window=RSI_PERIOD, min_periods=RSI_PERIOD).mean()
-
-    # 使用 Wilder's smoothing（EMA of gains/losses）
-    # 简化版：直接用 SMA 近似
-    rs = avg_gain / avg_loss.replace(0, np.nan)
-    rsi_series = 100 - (100 / (1 + rs))
+    # 使用 Wilder's RSI
+    rsi_series = _wilder_rsi(closes, RSI_PERIOD)
     rsi_series = rsi_series.dropna()
 
     if rsi_series.empty:
@@ -86,5 +101,8 @@ def calculate_rsi(data: Dict) -> Dict:
         result["zone"] = "超买"
         result["assessment"] = "RSI 高于 70，处于超买区域，回调风险增加"
 
-    logger.info(f"RSI: {current_rsi:.1f}, score: {result['score']}, zone: {result['zone']}")
+    logger.info(
+        f"RSI(Wilder): {current_rsi:.1f}, score: {result['score']}, "
+        f"zone: {result['zone']}"
+    )
     return result

@@ -23,7 +23,7 @@ def calculate_breadth(data: Dict) -> Dict:
          "assessment": str}
     """
     result = {
-        "score": 0,
+        "score": None,
         "pct_above_ma50": None,
         "stocks_checked": 0,
         "stocks_above_ma50": 0,

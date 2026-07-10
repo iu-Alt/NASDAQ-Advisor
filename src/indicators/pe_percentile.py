@@ -27,7 +27,7 @@ def calculate_pe_percentile(data: Dict) -> Dict:
            "pe_alltime_percentile": float, "source": str, "assessment": str}
     """
     result = {
-        "score": 0,
+        "score": None,
         "percentile": None,
         "current_pe": None,
         "pe_5yr_percentile": None,
@@ -49,6 +49,11 @@ def calculate_pe_percentile(data: Dict) -> Dict:
 
     result["current_pe"] = round(current_pe, 2)
     result["source"] = source
+
+    if source == "fallback_estimate" or pe_data.get("pe_fallback"):
+        logger.warning("PE uses fallback estimate, skipping PE percentile score")
+        result["assessment"] = "PE 使用固定回退估算，可信度不足，跳过评分"
+        return result
 
     # ---------- 第 2 步：构建历史 PE 估算序列 ----------
     # 策略：利用 NDX 历史价格 + 当前 PE + 收益增长假设来估算历史 PE

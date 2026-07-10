@@ -187,11 +187,27 @@
             <div class="decision-label" style="color: {{ decision.color }}">{{ decision.decision }}</div>
             <div class="decision-action">{{ decision.action }}</div>
             <div class="score-display">
+                {% if scoring.total_score is not none %}
                 <span class="score-number" style="color: {{ decision.color }}">{{ "%.1f"|format(scoring.total_score) }}</span>
                 <span class="score-max">/ {{ "%.1f"|format(scoring.max_possible) }} 分</span>
+                {% else %}
+                <span class="score-number" style="color: #64748b">N/A</span>
+                <span class="score-max">信号已抑制</span>
+                {% endif %}
             </div>
             <div style="margin-top: 8px; color: var(--text-secondary); font-size: 0.9rem;">
+                {% if scoring.score_pct is not none %}
                 评分百分位: {{ "%.0f"|format(scoring.score_pct) }}%
+                {% else %}
+                评分百分位: N/A
+                {% endif %}
+                · 有效指标覆盖: {{ "%.0f"|format(scoring.coverage_weight * 100) }}%
+                {% if scoring.missing_indicators %}
+                · 缺失: {{ scoring.missing_indicators|join(", ") }}
+                {% endif %}
+                {% if not scoring.signal_reliable %}
+                · ⚠️ 信号不可靠
+                {% endif %}
             </div>
         </div>
 

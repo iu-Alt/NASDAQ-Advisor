@@ -32,24 +32,38 @@ from .store import (
 
 logger = logging.getLogger(__name__)
 
-# 全局速率控制
-_RATE_LIMIT_DELAY = 1.5  # yfinance 调用间隔 (秒) — GitHub Actions IP 干净，不必太慢
+# ============================================================
+# 全局速率控制 + 共享 session
+# ============================================================
+# 核心策略：所有 yfinance 调用共享同一个 requests.Session。
+# Yahoo 通过 session cookie/crumb 识别同一用户，共享 session
+# 后多请求被视为正常浏览行为而非机器人攻击。
+#
+# 间隔从 1.5s 提到 3.0s，配合共享 session 足以避免限流。
+_RATE_LIMIT_DELAY = 3.0  # yfinance 调用间隔 (秒)
 _last_yf_call = 0.0
 
+# 模块级共享 session — 首次使用时延迟创建 (避免 import 时 hit)
+_yf_shared_session: Optional[requests.Session] = None
 
-def _create_yf_session() -> requests.Session:
-    """创建带浏览器 User-Agent 的 requests session，减少限流概率。"""
-    session = requests.Session()
-    session.headers.update({
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/125.0.0.0 Safari/537.36"
-        ),
-        "Accept": "application/json",
-        "Accept-Language": "en-US,en;q=0.9",
-    })
-    return session
+
+def _get_yf_session() -> requests.Session:
+    """获取或创建共享的 yfinance requests session (带浏览器 UA + cookies)。"""
+    global _yf_shared_session
+    if _yf_shared_session is None:
+        session = requests.Session()
+        session.headers.update({
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/125.0.0.0 Safari/537.36"
+            ),
+            "Accept": "application/json,text/html,application/xhtml+xml,*/*",
+            "Accept-Language": "en-US,en;q=0.9",
+        })
+        _yf_shared_session = session
+        logger.debug("Created shared yfinance session")
+    return _yf_shared_session
 
 
 def _rate_limit():
@@ -78,7 +92,7 @@ def _safe_yf_download(ticker: str, start: str, end: str,
     for attempt in range(4):
         try:
             _rate_limit()
-            t = yf.Ticker(ticker)
+            t = yf.Ticker(ticker, session=_get_yf_session())
             df = t.history(start=start, end=end, interval=interval,
                            auto_adjust=True)
             if df is not None and not df.empty:
@@ -181,41 +195,8 @@ def fetch_ndx_history(lookback_years: int = 10) -> pd.DataFrame:
 
 
 def fetch_ndx_current() -> Dict:
-    """获取 NDX 最新的关键数据点。失败时从缓存历史数据推算。"""
-    try:
-        _rate_limit()
-        ndx = yf.Ticker("^NDX")
-        info = ndx.info
-        fast_info = ndx.fast_info
-
-        # 近两日数据计算涨跌幅
-        hist = ndx.history(period="5d", auto_adjust=True)
-        if len(hist) >= 2:
-            latest_close = float(hist["Close"].iloc[-1])
-            prev_close = float(hist["Close"].iloc[-2])
-            change_pct = round((latest_close - prev_close) / prev_close * 100, 2)
-            change_val = round(latest_close - prev_close, 2)
-        else:
-            latest_close = float(fast_info.get("lastPrice", 0) or info.get("regularMarketPrice", 0))
-            prev_close = float(fast_info.get("previousClose", 0) or info.get("regularMarketPreviousClose", 0))
-            change_pct = round((latest_close - prev_close) / prev_close * 100, 2) if prev_close else 0
-            change_val = round(latest_close - prev_close, 2)
-
-        return {
-            "price": latest_close,
-            "prev_close": prev_close,
-            "change_pct": change_pct,
-            "change_val": change_val,
-            "52w_high": float(info.get("fiftyTwoWeekHigh", 0) or 0),
-            "52w_low": float(info.get("fiftyTwoWeekLow", 0) or 0),
-            "name": info.get("shortName", "NASDAQ-100"),
-            "source": "live",
-        }
-    except Exception as e:
-        logger.warning(f"Failed to fetch NDX current data: {e}, "
-                       f"falling back to cache")
-
-    # 回退：从缓存历史数据提取
+    """获取 NDX 最新的关键数据点。优先从缓存历史提取，减少 API 调用。"""
+    # 优先从缓存提取 (不发 API 请求)
     cached = get_ndx_history()
     if not cached.empty and "close" in cached.columns:
         closes = cached["close"].dropna()
@@ -224,16 +205,41 @@ def fetch_ndx_current() -> Dict:
             prev = float(closes.iloc[-2])
             high52 = float(closes.tail(252).max()) if len(closes) >= 252 else latest
             low52 = float(closes.tail(252).min()) if len(closes) >= 252 else latest
+            change_pct = round((latest - prev) / prev * 100, 2) if prev else 0
+            change_val = round(latest - prev, 2)
             return {
                 "price": round(latest, 2),
                 "prev_close": round(prev, 2),
-                "change_pct": round((latest - prev) / prev * 100, 2),
-                "change_val": round(latest - prev, 2),
+                "change_pct": change_pct,
+                "change_val": change_val,
                 "52w_high": round(high52, 2),
                 "52w_low": round(low52, 2),
-                "name": "NASDAQ-100 (cached)",
-                "source": "cache",
+                "name": "NASDAQ-100",
+                "source": "history_cache",
             }
+
+    # 缓存为空时尝试 live API (仅此情况，避免不必要的 API 调用)
+    logger.info("NDX history cache empty, falling back to live API")
+    try:
+        _rate_limit()
+        ndx = yf.Ticker("^NDX", session=_get_yf_session())
+        hist = ndx.history(period="5d", auto_adjust=True)
+        if len(hist) >= 2:
+            latest_close = float(hist["Close"].iloc[-1])
+            prev_close = float(hist["Close"].iloc[-2])
+            info = ndx.info
+            return {
+                "price": latest_close,
+                "prev_close": prev_close,
+                "change_pct": round((latest_close - prev_close) / prev_close * 100, 2),
+                "change_val": round(latest_close - prev_close, 2),
+                "52w_high": float(info.get("fiftyTwoWeekHigh", 0) or 0),
+                "52w_low": float(info.get("fiftyTwoWeekLow", 0) or 0),
+                "name": info.get("shortName", "NASDAQ-100"),
+                "source": "live",
+            }
+    except Exception as e:
+        logger.warning(f"Failed to fetch NDX current data: {e}")
     return {}
 
 
@@ -264,7 +270,7 @@ def fetch_qqq_pe_history(lookback_years: int = 10) -> pd.DataFrame:
     end = datetime.now().strftime("%Y-%m-%d")
 
     try:
-        qqq = yf.Ticker("QQQ")
+        qqq = yf.Ticker("QQQ", session=_get_yf_session())
         # 尝试获取季度 PE 数据（如果可用）
         info = qqq.info
         current_pe = info.get("trailingPE")
@@ -397,23 +403,25 @@ def fetch_vix_history(lookback_years: int = 5) -> pd.DataFrame:
 
 
 def fetch_vix_current() -> Optional[float]:
-    """获取 VIX 当前值。失败时从缓存提取。"""
-    try:
-        _rate_limit()
-        vix = yf.Ticker("^VIX")
-        fast_info = vix.fast_info
-        val = float(fast_info.get("lastPrice", 0) or vix.info.get("regularMarketPrice", 0))
-        if val > 0:
-            return val
-    except Exception as e:
-        logger.warning(f"Failed to fetch VIX live: {e}, falling back to cache")
-
-    # 回退：从缓存历史提取最新值
+    """获取 VIX 当前值。优先从缓存提取，减少 API 调用。"""
+    # 优先从缓存历史提取
     cached = get_vix_history()
     if not cached.empty and "close" in cached.columns:
         closes = cached["close"].dropna()
         if len(closes) > 0:
             return round(float(closes.iloc[-1]), 2)
+
+    # 缓存为空时尝试 live API
+    logger.info("VIX history cache empty, falling back to live API")
+    try:
+        _rate_limit()
+        vix = yf.Ticker("^VIX", session=_get_yf_session())
+        fast_info = vix.fast_info
+        val = float(fast_info.get("lastPrice", 0) or vix.info.get("regularMarketPrice", 0))
+        if val > 0:
+            return val
+    except Exception as e:
+        logger.warning(f"Failed to fetch VIX live: {e}")
     return None
 
 
@@ -429,7 +437,7 @@ def fetch_vxn_current() -> Optional[float]:
     """
     try:
         _rate_limit()
-        vxn = yf.Ticker(VXN_TICKER)
+        vxn = yf.Ticker(VXN_TICKER, session=_get_yf_session())
         fast_info = vxn.fast_info
         val = float(fast_info.get("lastPrice", 0) or vxn.info.get("regularMarketPrice", 0))
         if val and val > 0:
@@ -668,20 +676,11 @@ def fetch_all_data() -> Dict:
     logger.info(f"Starting data fetch at {datetime.now().isoformat()}")
     logger.info("=" * 60)
 
-    # ---- 数据质量预检查 ----
-    quality = get_data_quality_report()
-    if quality["is_synthetic"]:
-        logger.error("DATA QUALITY: Synthetic data detected in cache!")
-        logger.error("  Run 'rm data/*.csv' and re-run to download real data.")
-    if quality["issues"]:
-        for issue in quality["issues"]:
-            logger.warning(f"DATA QUALITY: {issue}")
-
     data = {
         "timestamp": datetime.now().isoformat(),
         "fetch_date": datetime.now().strftime("%Y-%m-%d"),
-        "data_quality": quality,
-        "data_as_of": {},  # 每个数据源的实际市场日期
+        "data_quality": {},  # 在数据获取完成后填充
+        "data_as_of": {},
     }
 
     # 1. NDX 历史价格
@@ -744,17 +743,27 @@ def fetch_all_data() -> Dict:
         "note": "真实成分股宽度待实现，当前版本已移除伪代理指标",
     }
 
-    # ---- 数据质量后检查 ----
-    # 检查是否有任何数据来自模拟缓存
+    # ---- 数据质量后检查 (在所有数据获取完成后) ----
+    quality = get_data_quality_report()
+    if quality["is_synthetic"]:
+        logger.error("DATA QUALITY: Synthetic data detected in cache!")
+        logger.error("  Run 'rm data/*.csv' and re-run to download real data.")
+    if quality["issues"]:
+        for issue in quality["issues"]:
+            logger.warning(f"DATA QUALITY: {issue}")
+
+    # 检查内存中的数据是否来自模拟
     for key in ["ndx_history", "vix_history", "dxy_history"]:
         df = data.get(key, pd.DataFrame())
         if not df.empty:
             prov = df.attrs.get("provenance", {})
             if prov.get("is_synthetic"):
-                data["data_quality"]["is_synthetic"] = True
-                data["data_quality"]["issues"].append(
+                quality["is_synthetic"] = True
+                quality["issues"].append(
                     f"{key}: data is synthetic (from generate_sample_data.py)"
                 )
+
+    data["data_quality"] = quality
 
     logger.info("Data fetch complete.")
     return data
